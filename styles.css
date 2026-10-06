@@ -15,6 +15,13 @@ header.top {
   align-items: baseline;
   justify-content: space-between;
   gap: 0.75rem;
+  padding-right: max(
+    0px,
+    calc(
+      max(0.75rem, env(safe-area-inset-right)) + 2.75rem + 0.35rem + 44px + 0.35rem -
+        max(1rem, env(safe-area-inset-right)) - (100vw - min(720px, 100vw)) / 2
+    )
+  );
 }
 
 header.top h1 {
@@ -37,10 +44,14 @@ header.top h1 {
   text-overflow: ellipsis;
 }
 
-@media (max-width: 840px) {
-  header.top {
-    padding-right: 2.85rem;
-  }
+/* The theme toggle is fixed in the corner. Park the hub link beside it,
+   and keep the title row clear of both controls. */
+body > .dong-home-link {
+  position: fixed;
+  z-index: 1000;
+  margin-left: 0;
+  top: calc(max(0.75rem, env(safe-area-inset-top)) + (1.75rem - 44px) / 2);
+  right: calc(max(0.75rem, env(safe-area-inset-right)) + 2.75rem + 0.35rem);
 }
 
 section {
