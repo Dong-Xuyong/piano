@@ -637,10 +637,606 @@
     }
   }
 
+  var SCHEMA_VERSION = 2;
+  var OWNER = "brook";
+  var ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+  function cloneDoc(doc) {
+    if (!doc || typeof doc !== "object" || Array.isArray(doc)) return blankStore();
+    return JSON.parse(JSON.stringify(doc));
+  }
+
+  function schemaOf(doc) {
+    if (!doc || typeof doc.schemaVersion !== "number" || !isFinite(doc.schemaVersion)) return 1;
+    return doc.schemaVersion;
+  }
+
+  function touchHeader(doc, nowIso) {
+    if (!own(doc, "version")) doc.version = 1;
+    var current = schemaOf(doc);
+    doc.schemaVersion = current > SCHEMA_VERSION ? current : SCHEMA_VERSION;
+    doc.owner = OWNER;
+    if (typeof nowIso === "string" && nowIso) doc.updatedAt = nowIso;
+    return doc;
+  }
+
+  function todayKey(date) {
+    var d = date instanceof Date ? date : new Date();
+    try {
+      var parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Europe/Lisbon",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).formatToParts(d);
+      var year = "";
+      var month = "";
+      var day = "";
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i].type === "year") year = parts[i].value;
+        if (parts[i].type === "month") month = parts[i].value;
+        if (parts[i].type === "day") day = parts[i].value;
+      }
+      var key = year + "-" + month + "-" + day;
+      if (isDayKey(key)) return key;
+    } catch (err) {}
+    return dayKey(d);
+  }
+
+  function weekDates(key) {
+    if (!isDayKey(key)) return [];
+    var start = mondayOf(key);
+    var out = [];
+    for (var i = 0; i < 7; i++) out.push(shift(start, i));
+    return out;
+  }
+
+  function trimText(value) {
+    if (typeof value !== "string") return "";
+    return value.replace(/^\s+|\s+$/g, "");
+  }
+
+  function normalizeEntries(day) {
+    var src = asObject(day);
+    if (!src || !Array.isArray(src.entries)) return [];
+    var out = [];
+    for (var i = 0; i < src.entries.length; i++) {
+      var row = asObject(src.entries[i]);
+      if (!row || typeof row.id !== "string" || row.id === "") continue;
+      var copy = {};
+      var keys = Object.keys(row);
+      for (var k = 0; k < keys.length; k++) copy[keys[k]] = row[keys[k]];
+      if (typeof copy.pieceId !== "string" || copy.pieceId === "") copy.pieceId = null;
+      copy.pieceTitle = copy.pieceId ? "" : (typeof copy.pieceTitle === "string" ? copy.pieceTitle : "");
+      if (typeof copy.note !== "string") copy.note = "";
+      if (copy.at !== null && typeof copy.at !== "string") copy.at = null;
+      if (copy.deleted === true) copy.deleted = true;
+      else delete copy.deleted;
+      out.push(copy);
+    }
+    return out;
+  }
+
+  function liveEntries(day) {
+    var rows = normalizeEntries(day);
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].deleted !== true) out.push(rows[i]);
+    }
+    return out;
+  }
+
+  function recomputeMinutes(day) {
+    if (!day || !Array.isArray(day.entries) || day.entries.length === 0) return;
+    var sum = 0;
+    var live = 0;
+    for (var i = 0; i < day.entries.length; i++) {
+      var row = day.entries[i];
+      if (!row || typeof row !== "object" || row.deleted === true) continue;
+      if (!isPositiveNumber(row.minutes)) continue;
+      sum += row.minutes;
+      live += 1;
+    }
+    day.minutes = live > 0 ? sum : 0;
+  }
+
+  function collectIds(doc) {
+    var used = Object.create(null);
+    var sessions = sessionsOf(doc);
+    var keys = Object.keys(sessions);
+    for (var i = 0; i < keys.length; i++) {
+      var day = asObject(sessions[keys[i]]);
+      if (!day || !Array.isArray(day.entries)) continue;
+      for (var e = 0; e < day.entries.length; e++) {
+        var row = asObject(day.entries[e]);
+        if (row && typeof row.id === "string") used[row.id] = true;
+      }
+    }
+    return used;
+  }
+
+  function randomId(used) {
+    var n, c, id;
+    for (n = 0; n < 32; n++) {
+      id = "ps_";
+      for (c = 0; c < 6; c++) {
+        id += ID_ALPHABET.charAt(Math.floor(Math.random() * ID_ALPHABET.length));
+      }
+      if (id !== "ps_legacy" && !used[id]) return id;
+    }
+    return "ps_zzzzzz";
+  }
+
+  function entryIdOk(id) {
+    return typeof id === "string" && /^(ps_[a-z0-9]{6}|ps_legacy)$/.test(id);
+  }
+
+  function buildEntry(partial, nowIso, id) {
+    var src = asObject(partial) || {};
+    var pieceId = null;
+    if (typeof src.pieceId === "string" && src.pieceId !== "") pieceId = src.pieceId;
+    var created = {
+      id: id,
+      at: typeof src.at === "string" ? src.at : (src.at === null ? null : nowIso),
+      minutes: src.minutes,
+      pieceId: pieceId,
+      pieceTitle: pieceId ? "" : trimText(src.pieceTitle),
+      note: trimText(src.note),
+      source: "app",
+      updatedAt: nowIso
+    };
+    var keys = Object.keys(src);
+    for (var i = 0; i < keys.length; i++) {
+      if (!own(created, keys[i])) created[keys[i]] = src[keys[i]];
+    }
+    return created;
+  }
+
+  function ensureSessions(doc) {
+    if (!doc.sessions || typeof doc.sessions !== "object" || Array.isArray(doc.sessions)) {
+      doc.sessions = {};
+    }
+    return doc.sessions;
+  }
+
+  function addEntry(doc, dateKey, entry, nowIso) {
+    if (!isDayKey(dateKey)) throw new Error("Bad date");
+    var partial = asObject(entry) || {};
+    if (!isPositiveNumber(partial.minutes)) throw new Error("Minutes must be greater than 0");
+    var next = cloneDoc(doc);
+    var sessions = ensureSessions(next);
+    var day = asObject(sessions[dateKey]);
+    if (!day) {
+      day = { updatedAt: nowIso, minutes: 0 };
+      sessions[dateKey] = day;
+    }
+    if (!Array.isArray(day.entries)) day.entries = [];
+    if (day.entries.length === 0 && isPositiveNumber(day.minutes)) {
+      day.entries.push({
+        id: "ps_legacy",
+        at: null,
+        minutes: day.minutes,
+        pieceId: null,
+        pieceTitle: "",
+        note: "",
+        source: "legacy",
+        updatedAt: nowIso
+      });
+    }
+    var used = collectIds(next);
+    var id = entryIdOk(partial.id) && !used[partial.id] ? partial.id : randomId(used);
+    day.entries.push(buildEntry(partial, nowIso, id));
+    day.updatedAt = nowIso;
+    recomputeMinutes(day);
+    touchHeader(next, nowIso);
+    return next;
+  }
+
+  function isLegacyEntry(row) {
+    return !!row && (row.id === "ps_legacy" || row.source === "legacy");
+  }
+
+  function applyPiece(row, patch) {
+    var pieceId = null;
+    if (typeof patch.pieceId === "string" && patch.pieceId !== "") pieceId = patch.pieceId;
+    row.pieceId = pieceId;
+    row.pieceTitle = pieceId ? "" : trimText(patch.pieceTitle);
+  }
+
+  function editEntry(doc, dateKey, id, patch, nowIso) {
+    if (!isDayKey(dateKey) || typeof id !== "string") return cloneDoc(doc);
+    var changes = asObject(patch) || {};
+    var next = cloneDoc(doc);
+    var day = asObject(ensureSessions(next)[dateKey]);
+    if (!day || !Array.isArray(day.entries)) return next;
+    var row = null;
+    for (var i = 0; i < day.entries.length; i++) {
+      if (day.entries[i] && day.entries[i].id === id) {
+        row = day.entries[i];
+        break;
+      }
+    }
+    if (!row) return next;
+    if (isLegacyEntry(row)) {
+      applyPiece(row, changes);
+    } else {
+      if (own(changes, "minutes")) {
+        if (!isPositiveNumber(changes.minutes)) throw new Error("Minutes must be greater than 0");
+        row.minutes = changes.minutes;
+      }
+      if (own(changes, "note")) row.note = trimText(changes.note);
+      if (own(changes, "pieceId") || own(changes, "pieceTitle")) applyPiece(row, changes);
+      if (own(changes, "at")) row.at = typeof changes.at === "string" || changes.at === null ? changes.at : row.at;
+    }
+    row.updatedAt = nowIso;
+    day.updatedAt = nowIso;
+    recomputeMinutes(day);
+    touchHeader(next, nowIso);
+    return next;
+  }
+
+  function deleteEntry(doc, dateKey, id, nowIso) {
+    if (!isDayKey(dateKey) || typeof id !== "string") return cloneDoc(doc);
+    var next = cloneDoc(doc);
+    var day = asObject(ensureSessions(next)[dateKey]);
+    if (!day || !Array.isArray(day.entries)) return next;
+    var found = false;
+    for (var i = 0; i < day.entries.length; i++) {
+      if (day.entries[i] && day.entries[i].id === id) {
+        day.entries[i].deleted = true;
+        day.entries[i].updatedAt = nowIso;
+        found = true;
+        break;
+      }
+    }
+    if (!found) return next;
+    day.updatedAt = nowIso;
+    recomputeMinutes(day);
+    touchHeader(next, nowIso);
+    return next;
+  }
+
+  function preferNewer(incoming, current) {
+    var kept = Date.parse(current && current.updatedAt);
+    var next = Date.parse(incoming && incoming.updatedAt);
+    if (!isFinite(next)) return false;
+    if (!isFinite(kept)) return true;
+    return next > kept;
+  }
+
+  function mergeEntryArrays(remoteEntries, localEntries) {
+    var order = [];
+    var map = Object.create(null);
+    function take(raw, allowReplace) {
+      var row = asObject(raw);
+      if (!row || typeof row.id !== "string" || row.id === "") return;
+      if (!own(map, row.id)) {
+        order.push(row.id);
+        map[row.id] = JSON.parse(JSON.stringify(row));
+        return;
+      }
+      if (allowReplace && preferNewer(row, map[row.id])) {
+        map[row.id] = JSON.parse(JSON.stringify(row));
+      }
+    }
+    var i;
+    var remoteList = Array.isArray(remoteEntries) ? remoteEntries : [];
+    var localList = Array.isArray(localEntries) ? localEntries : [];
+    for (i = 0; i < remoteList.length; i++) take(remoteList[i], false);
+    for (i = 0; i < localList.length; i++) take(localList[i], true);
+    var out = [];
+    for (i = 0; i < order.length; i++) out.push(map[order[i]]);
+    return out;
+  }
+
+  function newerStamp(a, b) {
+    var ia = typeof a === "string" ? Date.parse(a) : NaN;
+    var ib = typeof b === "string" ? Date.parse(b) : NaN;
+    if (isFinite(ia) && isFinite(ib)) return ia >= ib ? a : b;
+    if (isFinite(ia)) return a;
+    if (isFinite(ib)) return b;
+    if (typeof a === "string") return a;
+    if (typeof b === "string") return b;
+    return null;
+  }
+
+  function mergeEntries(local, remote) {
+    if (!remote || typeof remote !== "object" || Array.isArray(remote)) {
+      var alone = cloneDoc(local);
+      return touchHeader(alone, alone.updatedAt);
+    }
+    var result = cloneDoc(remote);
+    if (schemaOf(remote) > SCHEMA_VERSION) return result;
+    var localSessions = sessionsOf(local);
+    var remoteSessions = sessionsOf(remote);
+    if (!result.sessions || typeof result.sessions !== "object" || Array.isArray(result.sessions)) {
+      result.sessions = {};
+    }
+    var seen = Object.create(null);
+    var dates = [];
+    var keys = Object.keys(remoteSessions).concat(Object.keys(localSessions));
+    var i;
+    for (i = 0; i < keys.length; i++) {
+      if (!isDayKey(keys[i]) || seen[keys[i]]) continue;
+      seen[keys[i]] = true;
+      dates.push(keys[i]);
+    }
+    dates.sort();
+    for (i = 0; i < dates.length; i++) {
+      var date = dates[i];
+      var lDay = asObject(localSessions[date]);
+      var rDay = asObject(remoteSessions[date]);
+      var localHas = !!(lDay && Array.isArray(lDay.entries) && lDay.entries.length > 0);
+      if (rDay && !localHas) continue;
+      if (!rDay && lDay) {
+        var added = JSON.parse(JSON.stringify(lDay));
+        recomputeMinutes(added);
+        result.sessions[date] = added;
+        continue;
+      }
+      if (!rDay || !lDay) continue;
+      var day = result.sessions[date];
+      day.entries = mergeEntryArrays(rDay.entries, lDay.entries);
+      recomputeMinutes(day);
+      day.updatedAt = newerStamp(lDay.updatedAt, rDay.updatedAt);
+    }
+    if (!own(result, "version")) result.version = 1;
+    var maxVersion = Math.max(schemaOf(local), schemaOf(remote));
+    result.schemaVersion = maxVersion > SCHEMA_VERSION ? maxVersion : Math.max(maxVersion, SCHEMA_VERSION);
+    result.owner = OWNER;
+    result.updatedAt = newerStamp(local && local.updatedAt, remote.updatedAt);
+    return result;
+  }
+
+  function entriesForWeek(doc, key) {
+    if (!isDayKey(key)) return [];
+    var dates = weekDates(key);
+    var allow = Object.create(null);
+    var i;
+    for (i = 0; i < dates.length; i++) allow[dates[i]] = true;
+    var sessions = sessionsOf(doc);
+    var keys = sessionKeys(sessions);
+    var rows = [];
+    for (i = 0; i < keys.length; i++) {
+      if (!allow[keys[i]]) continue;
+      var entries = liveEntries(sessions[keys[i]]);
+      for (var e = 0; e < entries.length; e++) {
+        rows.push({ date: keys[i], entry: entries[e] });
+      }
+    }
+    rows.sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      var ta = Date.parse((a.entry && (a.entry.at || a.entry.updatedAt)) || "");
+      var tb = Date.parse((b.entry && (b.entry.at || b.entry.updatedAt)) || "");
+      if (!isFinite(ta)) ta = 0;
+      if (!isFinite(tb)) tb = 0;
+      if (ta !== tb) return tb - ta;
+      var ida = a.entry && a.entry.id ? a.entry.id : "";
+      var idb = b.entry && b.entry.id ? b.entry.id : "";
+      if (ida === idb) return 0;
+      return ida < idb ? 1 : -1;
+    });
+    return rows;
+  }
+
+  function entryLabel(doc, entry) {
+    if (!entry || typeof entry !== "object") return "Unspecified";
+    if (typeof entry.pieceId === "string" && entry.pieceId) {
+      var rec = pieceRecord(doc && doc.pieces, entry.pieceId);
+      if (rec && typeof rec.title === "string" && rec.title !== "") return rec.title;
+      return entry.pieceId;
+    }
+    if (typeof entry.pieceTitle === "string" && entry.pieceTitle !== "") return entry.pieceTitle;
+    return "Unspecified";
+  }
+
+  function minutesByPiece(doc, days) {
+    var allow = null;
+    if (Array.isArray(days)) {
+      allow = Object.create(null);
+      for (var d = 0; d < days.length; d++) {
+        if (isDayKey(days[d])) allow[days[d]] = true;
+      }
+    } else if (isDayKey(days)) {
+      var dates = weekDates(days);
+      allow = Object.create(null);
+      for (var w = 0; w < dates.length; w++) allow[dates[w]] = true;
+    }
+    var sessions = sessionsOf(doc);
+    var keys = sessionKeys(sessions);
+    var buckets = Object.create(null);
+    var order = [];
+    for (var i = 0; i < keys.length; i++) {
+      if (allow && !allow[keys[i]]) continue;
+      var entries = liveEntries(sessions[keys[i]]);
+      for (var e = 0; e < entries.length; e++) {
+        var entry = entries[e];
+        var bucketKey;
+        if (entry.pieceId) bucketKey = "id:" + entry.pieceId;
+        else if (entry.pieceTitle) bucketKey = "title:" + entry.pieceTitle;
+        else bucketKey = "unspecified";
+        if (!buckets[bucketKey]) {
+          buckets[bucketKey] = {
+            pieceId: entry.pieceId || null,
+            pieceTitle: entryLabel(doc, entry),
+            minutes: 0
+          };
+          order.push(bucketKey);
+        }
+        if (isPositiveNumber(entry.minutes)) buckets[bucketKey].minutes += entry.minutes;
+      }
+    }
+    var out = [];
+    for (var n = 0; n < order.length; n++) out.push(buckets[order[n]]);
+    out.sort(function (a, b) {
+      if (a.minutes !== b.minutes) return b.minutes - a.minutes;
+      return String(a.pieceTitle).localeCompare(String(b.pieceTitle));
+    });
+    return out;
+  }
+
+  function pieceChoices(doc, selectedId) {
+    var src = doc && doc.pieces;
+    var out = [];
+    if (!src || typeof src !== "object" || Array.isArray(src)) return out;
+    var ids = Object.keys(src);
+    for (var i = 0; i < ids.length; i++) {
+      var piece = asObject(src[ids[i]]);
+      if (!piece) continue;
+      var status = typeof piece.status === "string" ? piece.status : "";
+      if (status === "planned" && ids[i] !== selectedId) continue;
+      out.push({
+        id: ids[i],
+        title: typeof piece.title === "string" && piece.title !== "" ? piece.title : ids[i],
+        status: status
+      });
+    }
+    out.sort(function (a, b) {
+      var byTitle = a.title.localeCompare(b.title);
+      if (byTitle !== 0) return byTitle;
+      return a.id.localeCompare(b.id);
+    });
+    return out;
+  }
+
+  function seedDoc() {
+    return {
+      version: 1,
+      schemaVersion: 2,
+      owner: "brook",
+      updatedAt: null,
+      profile: {
+        weeklyMinutesGoal: null,
+        minimumSessionMinutes: 10
+      },
+      pieces: {},
+      sessions: {},
+      recordings: [],
+      plan: {
+        updatedAt: null,
+        next: [],
+        coachNote: ""
+      }
+    };
+  }
+
+  function demoDoc() {
+    return {
+      version: 1,
+      schemaVersion: 2,
+      owner: "brook",
+      updatedAt: "2026-01-13T18:00:00.000Z",
+      profile: {
+        weeklyMinutesGoal: 60,
+        minimumSessionMinutes: 10
+      },
+      pieces: {
+        "example-etude": {
+          title: "EXAMPLE Etude",
+          composer: "EXAMPLE",
+          status: "learning",
+          targetBpm: null,
+          sections: []
+        },
+        "example-waltz": {
+          title: "EXAMPLE Waltz",
+          composer: "EXAMPLE",
+          status: "maintaining",
+          targetBpm: null,
+          sections: []
+        }
+      },
+      sessions: {
+        "2026-01-12": {
+          updatedAt: "2026-01-12T19:00:00.000Z",
+          minutes: 30,
+          pieces: [],
+          ear: [],
+          sight: [],
+          note: "",
+          entries: [
+            {
+              id: "ps_demo01",
+              at: "2026-01-12T18:00:00.000Z",
+              minutes: 20,
+              pieceId: "example-etude",
+              pieceTitle: "",
+              note: "Hands separate",
+              source: "app",
+              updatedAt: "2026-01-12T18:00:00.000Z"
+            },
+            {
+              id: "ps_demo02",
+              at: "2026-01-12T19:00:00.000Z",
+              minutes: 10,
+              pieceId: null,
+              pieceTitle: "EXAMPLE scale",
+              note: "",
+              source: "app",
+              updatedAt: "2026-01-12T19:00:00.000Z"
+            }
+          ]
+        },
+        "2026-01-13": {
+          updatedAt: "2026-01-13T18:00:00.000Z",
+          minutes: 15,
+          pieces: [],
+          ear: [],
+          sight: [],
+          note: "Keep the pulse"
+        }
+      },
+      recordings: [],
+      plan: {
+        updatedAt: null,
+        next: [
+          "EXAMPLE keep the pulse",
+          "EXAMPLE count aloud",
+          "EXAMPLE stop while it is clean"
+        ],
+        coachNote: "EXAMPLE short sessions count."
+      }
+    };
+  }
+
+  function isConflict(err) {
+    var msg = "";
+    if (err && typeof err.message === "string") msg = err.message;
+    else if (typeof err === "string") msg = err;
+    return msg.indexOf("another device") !== -1;
+  }
+
+  function saveWithRetry(saveFn) {
+    return Promise.resolve().then(function () {
+      return saveFn();
+    }).catch(function (err) {
+      if (!isConflict(err)) return Promise.reject(err);
+      return saveFn();
+    });
+  }
+
   return {
+    SCHEMA_VERSION: SCHEMA_VERSION,
     blankStore: blankStore,
     dayKey: dayKey,
     shift: shift,
-    derive: derive
+    derive: derive,
+    todayKey: todayKey,
+    weekDates: weekDates,
+    seedDoc: seedDoc,
+    demoDoc: demoDoc,
+    schemaVersionOf: schemaOf,
+    normalizeEntries: normalizeEntries,
+    liveEntries: liveEntries,
+    addEntry: addEntry,
+    editEntry: editEntry,
+    deleteEntry: deleteEntry,
+    mergeEntries: mergeEntries,
+    entriesForWeek: entriesForWeek,
+    minutesByPiece: minutesByPiece,
+    entryLabel: entryLabel,
+    pieceChoices: pieceChoices,
+    isConflict: isConflict,
+    saveWithRetry: saveWithRetry
   };
 });

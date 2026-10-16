@@ -207,3 +207,200 @@ a {
   border-top: 1px solid var(--line);
   line-height: 1.4;
 }
+
+header.top {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+a.log-link {
+  flex: 1 0 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: 0.65rem;
+  padding: 0 0.9rem;
+  border-radius: var(--radius, 0.5rem);
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+a.log-link:hover,
+a.log-link:focus-visible {
+  filter: brightness(1.05);
+}
+
+.demo-banner,
+.format-banner {
+  margin: 0.9rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--radius, 0.5rem);
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.format-banner {
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+  border-color: transparent;
+}
+
+#log .log-back a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-weight: 600;
+  color: hsl(var(--primary));
+  text-decoration: none;
+}
+
+#log h2 {
+  margin-top: 0.2rem;
+}
+
+#log-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+#log-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+#log-form input,
+#log-form select {
+  width: 100%;
+  max-width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius, 0.5rem);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 400;
+}
+
+#log-form input:disabled,
+#log-form select:disabled {
+  opacity: 0.65;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.chips button,
+.log-actions button,
+.log-row-actions button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 0.85rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius, 0.5rem);
+  background: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chips button[aria-pressed="true"] {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: transparent;
+}
+
+.log-error {
+  margin: 0;
+  color: hsl(0 72% 38%);
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+html.dark .log-error {
+  color: hsl(0 84% 74%);
+}
+
+.log-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+#log-save {
+  flex: 1 1 8rem;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border-color: transparent;
+}
+
+#log-summary,
+#log-list {
+  min-width: 0;
+}
+
+#log-summary {
+  margin-top: 1.25rem;
+}
+
+#log-summary > h2,
+#log-list > h2 {
+  margin-top: 1rem;
+}
+
+.log-total {
+  font-size: 1.2rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0;
+  min-width: 0;
+}
+
+.log-row + .log-row {
+  border-top: 1px solid hsl(var(--border));
+}
+
+.log-row-text {
+  flex: 1 1 12rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
+}
+
+.log-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+[hidden] {
+  display: none !important;
+}

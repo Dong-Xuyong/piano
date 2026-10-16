@@ -1,12 +1,28 @@
 /**
- * Read-only piano dashboard. Renders PianoCore.derive() into the page
- * and refreshes from GhSync (piano.json). No editors, no local writes.
+ * Piano dashboard plus a practice log.
+ * The dashboard renders PianoCore.derive(). #/log writes practice entries
+ * through GhSync (piano.json): sessions[date].entries, that day's minutes
+ * and updatedAt, and the top-level updatedAt, schemaVersion, and owner.
+ * Minutes stay the sum of the live entries. Every other field is merged
+ * from the remote file and is not edited here.
  */
 (function () {
   "use strict";
 
   var APP_ID = "piano";
+  var SAVE_DELAY = 2500;
   var pulling = false;
+  var state = {
+    doc: null,
+    demo: false,
+    readOnly: false,
+    dirty: false,
+    generation: 0,
+    savePending: false,
+    saveTimer: null,
+    stopped: false,
+    editing: null
+  };
 
   function messageOf(err) {
     if (err && typeof err.message === "string" && err.message) return err.message;
@@ -486,6 +502,7 @@
     renderSight(data.sight);
     renderRecordings(data.recordings);
     renderInsights(data.insights);
+    renderLog();
   }
 
   function coreReady() {
@@ -493,17 +510,514 @@
       typeof GhSync !== "undefined" &&
       GhSync &&
       typeof GhSync.load === "function" &&
+      typeof GhSync.save === "function" &&
       typeof PianoCore !== "undefined" &&
       PianoCore &&
       typeof PianoCore.blankStore === "function" &&
       typeof PianoCore.dayKey === "function" &&
-      typeof PianoCore.derive === "function"
+      typeof PianoCore.derive === "function" &&
+      typeof PianoCore.addEntry === "function" &&
+      typeof PianoCore.mergeEntries === "function" &&
+      typeof PianoCore.todayKey === "function"
     );
   }
 
-  function applyRemote(remoteJson) {
+  function today() {
+    return PianoCore.todayKey(new Date());
+  }
+
+  function hasToken() {
     try {
-      render(PianoCore.derive(remoteJson, PianoCore.dayKey(new Date())));
+      var raw = localStorage.getItem("dong-gh-sync");
+      if (!raw) return false;
+      var cfg = JSON.parse(raw);
+      return !!(cfg && typeof cfg.token === "string" && cfg.token);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function fieldFocused() {
+    var el = document.activeElement;
+    if (!el || !el.tagName) return false;
+    var tag = el.tagName;
+    if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return false;
+    var log = document.getElementById("log");
+    return !!(log && log.contains && log.contains(el));
+  }
+
+  function showError(text) {
+    var node = document.getElementById("log-error");
+    if (!node) return;
+    if (text) {
+      node.hidden = false;
+      node.textContent = text;
+    } else {
+      node.hidden = true;
+      node.textContent = "";
+    }
+  }
+
+  function renderBanners() {
+    var demo = document.getElementById("demo-banner");
+    var format = document.getElementById("format-banner");
+    if (demo) demo.hidden = !state.demo;
+    if (format) format.hidden = !state.readOnly;
+  }
+
+  function isLogRoute() {
+    var hash = location.hash || "";
+    return hash === "#/log" || hash.indexOf("#/log?") === 0;
+  }
+
+  function route() {
+    var log = isLogRoute();
+    var ids = ["consistency", "plan", "heatmap", "pieces", "ear", "sight", "recordings", "insights"];
+    var i;
+    for (i = 0; i < ids.length; i++) {
+      var node = document.getElementById(ids[i]);
+      if (node) node.hidden = log;
+    }
+    var section = document.getElementById("log");
+    if (section) section.hidden = !log;
+  }
+
+  function toggleOther() {
+    var select = document.getElementById("log-piece");
+    var label = document.getElementById("log-piece-title-label");
+    if (!select || !label) return;
+    label.hidden = select.value !== "other";
+  }
+
+  function syncChips() {
+    var input = document.getElementById("log-minutes");
+    var value = input ? String(input.value) : "";
+    var chips = document.querySelectorAll("#log-form [data-minutes]");
+    var i;
+    for (i = 0; i < chips.length; i++) {
+      chips[i].setAttribute("aria-pressed", chips[i].getAttribute("data-minutes") === value ? "true" : "false");
+    }
+  }
+
+  function syncFormMode() {
+    var legacy = !!(state.editing && state.editing.legacy);
+    var editing = !!state.editing;
+    var lock = !!state.readOnly;
+    var dateEl = document.getElementById("log-date");
+    var minutesEl = document.getElementById("log-minutes");
+    var noteEl = document.getElementById("log-note");
+    var pieceEl = document.getElementById("log-piece");
+    var titleEl = document.getElementById("log-piece-title");
+    var saveEl = document.getElementById("log-save");
+    var cancelEl = document.getElementById("log-cancel");
+    if (dateEl) dateEl.disabled = lock || editing;
+    if (minutesEl) minutesEl.disabled = lock || legacy;
+    if (noteEl) noteEl.disabled = lock || legacy;
+    if (pieceEl) pieceEl.disabled = lock;
+    if (titleEl) titleEl.disabled = lock;
+    if (saveEl) {
+      saveEl.disabled = lock;
+      saveEl.textContent = editing ? "Update" : "Save";
+    }
+    if (cancelEl) cancelEl.hidden = !editing;
+    var chips = document.querySelectorAll("#log-form [data-minutes]");
+    var i;
+    for (i = 0; i < chips.length; i++) chips[i].disabled = lock || legacy;
+    syncChips();
+  }
+
+  function fillPieces(selectedId) {
+    var select = document.getElementById("log-piece");
+    if (!select) return;
+    var current = selectedId !== undefined ? selectedId : select.value;
+    while (select.firstChild) select.removeChild(select.firstChild);
+    function option(value, text) {
+      var node = document.createElement("option");
+      node.value = value;
+      node.textContent = text;
+      select.appendChild(node);
+    }
+    option("", "Unspecified");
+    var choices = PianoCore.pieceChoices(state.doc || {}, current === "other" ? "" : current);
+    var i;
+    for (i = 0; i < choices.length; i++) option(choices[i].id, choices[i].title);
+    option("other", "Other\u2026");
+    var found = false;
+    for (i = 0; i < select.options.length; i++) {
+      if (select.options[i].value === current) found = true;
+    }
+    select.value = found ? current : "";
+    toggleOther();
+  }
+
+  function ensureDate() {
+    var input = document.getElementById("log-date");
+    if (input && !input.value) input.value = today();
+  }
+
+  function clearForm() {
+    var dateEl = document.getElementById("log-date");
+    var minutesEl = document.getElementById("log-minutes");
+    var noteEl = document.getElementById("log-note");
+    var titleEl = document.getElementById("log-piece-title");
+    if (dateEl) dateEl.value = today();
+    if (minutesEl) minutesEl.value = "";
+    if (noteEl) noteEl.value = "";
+    if (titleEl) titleEl.value = "";
+    fillPieces("");
+    showError("");
+    syncFormMode();
+  }
+
+  function renderSummary(doc, day) {
+    var root = document.getElementById("log-summary");
+    if (!root) return;
+    while (root.firstChild) root.removeChild(root.firstChild);
+    root.appendChild(heading("This week"));
+    var view = PianoCore.derive(doc, day);
+    var total = view.consistency && isNum(view.consistency.weekMinutes) ? view.consistency.weekMinutes : 0;
+    var goal = doc && doc.profile && typeof doc.profile.weeklyMinutesGoal === "number"
+      ? doc.profile.weeklyMinutesGoal
+      : null;
+    var card = el("div", "card");
+    if (goal !== null) {
+      var line = el("p", "log-total");
+      line.textContent = total + " of " + goal + " min";
+      card.appendChild(line);
+      if (goal > 0) card.appendChild(bar((total / goal) * 100));
+    } else if (total > 0) {
+      var plain = el("p", "log-total");
+      plain.textContent = total + " min";
+      card.appendChild(plain);
+    }
+    var pieces = PianoCore.minutesByPiece(doc, PianoCore.weekDates(day));
+    if (!pieces.length) {
+      card.appendChild(muted(total > 0 ? "No minutes by piece yet." : "No practice logged this week."));
+    } else {
+      for (var i = 0; i < pieces.length; i++) {
+        var row = el("div", "row");
+        addText(row, pieces[i].pieceTitle);
+        addText(row, pieces[i].minutes + " min");
+        card.appendChild(row);
+      }
+    }
+    root.appendChild(card);
+  }
+
+  function findEntry(doc, date, id) {
+    var sessions = doc && doc.sessions;
+    var day = sessions && sessions[date];
+    var entries = day && day.entries;
+    if (!Array.isArray(entries)) return null;
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i] && entries[i].id === id) return entries[i];
+    }
+    return null;
+  }
+
+  function appendEntryRows(card, rows) {
+    var i;
+    for (i = 0; i < rows.length; i++) {
+      var item = rows[i];
+      var entry = item.entry || {};
+      var row = el("div", "log-row");
+      var text = el("div", "log-row-text");
+      var label = PianoCore.entryLabel(state.doc, entry);
+      var bits = [];
+      bits.push((isNum(entry.minutes) ? entry.minutes : 0) + " min");
+      bits.push(label);
+      if (typeof entry.note === "string" && entry.note !== "") bits.push(entry.note);
+      text.textContent = bits.join(" \u00b7 ");
+      if (entry.id === "ps_legacy" || entry.source === "legacy") {
+        var tag = el("span", "badge");
+        tag.textContent = "Legacy";
+        text.appendChild(document.createTextNode(" "));
+        text.appendChild(tag);
+      }
+      row.appendChild(text);
+      if (!state.readOnly) {
+        var actions = el("div", "log-row-actions");
+        var edit = document.createElement("button");
+        edit.type = "button";
+        edit.textContent = "Edit";
+        edit.setAttribute("data-edit-date", item.date);
+        edit.setAttribute("data-edit-id", entry.id || "");
+        var remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Delete";
+        remove.setAttribute("data-delete-date", item.date);
+        remove.setAttribute("data-delete-id", entry.id || "");
+        actions.appendChild(edit);
+        actions.appendChild(remove);
+        row.appendChild(actions);
+      }
+      card.appendChild(row);
+    }
+  }
+
+  function renderGroup(root, title, rows, emptyText) {
+    root.appendChild(heading(title));
+    var card = el("div", "card");
+    if (!rows.length) card.appendChild(muted(emptyText));
+    else appendEntryRows(card, rows);
+    root.appendChild(card);
+  }
+
+  function renderList(doc, day) {
+    var root = document.getElementById("log-list");
+    if (!root) return;
+    while (root.firstChild) root.removeChild(root.firstChild);
+    var rows = PianoCore.entriesForWeek(doc, day);
+    var todayRows = [];
+    var earlier = [];
+    var i;
+    for (i = 0; i < rows.length; i++) {
+      if (rows[i].date === day) todayRows.push(rows[i]);
+      else earlier.push(rows[i]);
+    }
+    renderGroup(root, "Today", todayRows, "No entries today.");
+    renderGroup(root, "Earlier this week", earlier, "No other entries this week.");
+  }
+
+  function renderLog() {
+    if (typeof PianoCore === "undefined" || !PianoCore || typeof PianoCore.derive !== "function") return;
+    var day = today();
+    var doc = state.doc || PianoCore.blankStore();
+    renderSummary(doc, day);
+    renderList(doc, day);
+    if (!fieldFocused()) {
+      ensureDate();
+      if (!state.editing) fillPieces();
+    }
+    syncFormMode();
+    renderBanners();
+    route();
+  }
+
+  function markDirty() {
+    if (state.demo || state.readOnly || state.stopped) return;
+    state.dirty = true;
+    state.generation += 1;
+    scheduleSave();
+  }
+
+  function scheduleSave() {
+    if (state.demo || state.readOnly || state.stopped || !state.dirty) return;
+    if (state.saveTimer) clearTimeout(state.saveTimer);
+    state.saveTimer = setTimeout(function () {
+      state.saveTimer = null;
+      flushSave();
+    }, SAVE_DELAY);
+  }
+
+  function flushSave() {
+    if (state.saveTimer) {
+      clearTimeout(state.saveTimer);
+      state.saveTimer = null;
+    }
+    if (state.demo || state.readOnly || state.stopped) return;
+    if (!state.dirty || state.savePending) return;
+    if (!hasToken() || typeof GhSync === "undefined" || !GhSync || typeof GhSync.save !== "function") return;
+    var gen = state.generation;
+    state.savePending = true;
+    setSync("Saving\u2026");
+    PianoCore.saveWithRetry(function () {
+      return GhSync.save(APP_ID, function () {
+        return state.doc;
+      }, function (remote) {
+        if (PianoCore.schemaVersionOf(remote) > PianoCore.SCHEMA_VERSION) {
+          state.doc = remote;
+          state.readOnly = true;
+          state.dirty = false;
+          throw new Error("Newer data format, update the app");
+        }
+        state.doc = PianoCore.mergeEntries(state.doc, remote);
+      }, { quiet: true });
+    }).then(function () {
+      state.savePending = false;
+      if (state.readOnly) {
+        setSync("Newer data format, update the app");
+        render(PianoCore.derive(state.doc, today()));
+        return;
+      }
+      if (state.generation === gen) state.dirty = false;
+      else scheduleSave();
+      setSync("Synced " + formatTime(new Date()));
+      render(PianoCore.derive(state.doc, today()));
+    }, function (err) {
+      state.savePending = false;
+      if (PianoCore.isConflict(err)) {
+        state.stopped = true;
+        setSync("⚠️ Not saved, reload");
+        return;
+      }
+      setSync(messageOf(err));
+    });
+  }
+
+  function paint() {
+    render(PianoCore.derive(state.doc || PianoCore.blankStore(), today()));
+  }
+
+  function enterDemo() {
+    state.demo = true;
+    state.readOnly = false;
+    state.dirty = false;
+    state.doc = PianoCore.demoDoc();
+    setSync("Demo");
+    paint();
+  }
+
+  function startEdit(date, id) {
+    var entry = findEntry(state.doc, date, id);
+    if (!entry || state.readOnly) return;
+    var legacy = entry.id === "ps_legacy" || entry.source === "legacy";
+    state.editing = { date: date, id: id, legacy: legacy };
+    var dateEl = document.getElementById("log-date");
+    var minutesEl = document.getElementById("log-minutes");
+    var noteEl = document.getElementById("log-note");
+    var titleEl = document.getElementById("log-piece-title");
+    if (dateEl) dateEl.value = date;
+    if (minutesEl) minutesEl.value = isNum(entry.minutes) ? String(entry.minutes) : "";
+    if (noteEl) noteEl.value = typeof entry.note === "string" ? entry.note : "";
+    var pieceVal = "";
+    if (typeof entry.pieceId === "string" && entry.pieceId) pieceVal = entry.pieceId;
+    else if (typeof entry.pieceTitle === "string" && entry.pieceTitle) pieceVal = "other";
+    fillPieces(pieceVal);
+    if (titleEl) titleEl.value = pieceVal === "other" ? entry.pieceTitle : "";
+    showError("");
+    syncFormMode();
+    var form = document.getElementById("log-form");
+    if (form && form.scrollIntoView) form.scrollIntoView({ block: "nearest" });
+  }
+
+  function cancelEdit() {
+    state.editing = null;
+    clearForm();
+  }
+
+  function onSubmit(ev) {
+    if (ev && ev.preventDefault) ev.preventDefault();
+    if (state.readOnly || !state.doc) return;
+    var minutes = Number(document.getElementById("log-minutes").value);
+    if (!isFinite(minutes) || minutes <= 0) {
+      showError("Enter minutes greater than 0.");
+      return;
+    }
+    var pieceVal = document.getElementById("log-piece").value;
+    var pieceId = null;
+    var pieceTitle = "";
+    if (pieceVal === "other") {
+      pieceTitle = document.getElementById("log-piece-title").value.replace(/^\s+|\s+$/g, "");
+      if (!pieceTitle) {
+        showError("Name the piece.");
+        return;
+      }
+    } else if (pieceVal) {
+      pieceId = pieceVal;
+    }
+    var note = document.getElementById("log-note").value;
+    var now = new Date().toISOString();
+    showError("");
+    try {
+      if (state.editing && state.editing.legacy) {
+        state.doc = PianoCore.editEntry(state.doc, state.editing.date, state.editing.id, {
+          pieceId: pieceId,
+          pieceTitle: pieceTitle
+        }, now);
+      } else if (state.editing) {
+        state.doc = PianoCore.editEntry(state.doc, state.editing.date, state.editing.id, {
+          minutes: minutes,
+          note: note,
+          pieceId: pieceId,
+          pieceTitle: pieceTitle
+        }, now);
+      } else {
+        var date = document.getElementById("log-date").value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          showError("Enter a date.");
+          return;
+        }
+        state.doc = PianoCore.addEntry(state.doc, date, {
+          minutes: minutes,
+          note: note,
+          pieceId: pieceId,
+          pieceTitle: pieceTitle,
+          at: now
+        }, now);
+      }
+    } catch (err) {
+      showError(messageOf(err));
+      return;
+    }
+    state.editing = null;
+    clearForm();
+    markDirty();
+    paint();
+    if (state.demo) setSync("Demo");
+  }
+
+  function onDelete(date, id) {
+    if (state.readOnly || !state.doc) return;
+    if (!window.confirm("Delete this practice block?")) return;
+    state.doc = PianoCore.deleteEntry(state.doc, date, id, new Date().toISOString());
+    if (state.editing && state.editing.date === date && state.editing.id === id) {
+      state.editing = null;
+      clearForm();
+    }
+    markDirty();
+    paint();
+    if (state.demo) setSync("Demo");
+  }
+
+  function bindLog() {
+    var form = document.getElementById("log-form");
+    if (!form || form.getAttribute("data-bound") === "1") return;
+    form.setAttribute("data-bound", "1");
+    form.addEventListener("submit", onSubmit);
+    form.addEventListener("click", function (ev) {
+      var target = ev.target;
+      if (!target || !target.getAttribute) return;
+      var minutes = target.getAttribute("data-minutes");
+      if (!minutes) return;
+      var input = document.getElementById("log-minutes");
+      if (!input || input.disabled) return;
+      input.value = minutes;
+      syncChips();
+    });
+    form.addEventListener("input", function (ev) {
+      var target = ev.target;
+      if (target && target.id === "log-minutes") syncChips();
+    });
+    var select = document.getElementById("log-piece");
+    if (select) select.addEventListener("change", toggleOther);
+    var cancel = document.getElementById("log-cancel");
+    if (cancel) cancel.addEventListener("click", cancelEdit);
+    var list = document.getElementById("log-list");
+    if (list) {
+      list.addEventListener("click", function (ev) {
+        var target = ev.target;
+        if (!target || !target.getAttribute) return;
+        var editDate = target.getAttribute("data-edit-date");
+        var editId = target.getAttribute("data-edit-id");
+        if (editDate && editId) {
+          startEdit(editDate, editId);
+          return;
+        }
+        var deleteDate = target.getAttribute("data-delete-date");
+        var deleteId = target.getAttribute("data-delete-id");
+        if (deleteDate && deleteId) onDelete(deleteDate, deleteId);
+      });
+    }
+  }
+
+  function applyRemote(remoteJson) {
+    if (state.dirty || state.savePending) return;
+    try {
+      state.doc = remoteJson;
+      state.demo = false;
+      state.readOnly = PianoCore.schemaVersionOf(remoteJson) > PianoCore.SCHEMA_VERSION;
+      render(PianoCore.derive(state.doc, today()));
     } catch (err) {
       setSync(messageOf(err));
       throw err;
@@ -517,7 +1031,12 @@
   }
 
   function pull() {
-    if (pulling) return;
+    if (state.demo) return;
+    if (!hasToken()) {
+      enterDemo();
+      return;
+    }
+    if (pulling || state.savePending || state.dirty || fieldFocused()) return;
     if (typeof GhSync === "undefined" || !GhSync || typeof GhSync.load !== "function") {
       setSync("Not synced");
       return;
@@ -541,9 +1060,18 @@
     }
 
     pending.then(
-      function () {
-        setSync("Synced " + formatTime(new Date()));
+      function (message) {
         pulling = false;
+        if (state.readOnly) {
+          setSync("Newer data format, update the app");
+          return;
+        }
+        if (!state.dirty && !state.savePending && message === "Nothing saved on GitHub yet") {
+          state.doc = PianoCore.seedDoc();
+          state.demo = false;
+          paint();
+        }
+        if (!state.savePending) setSync("Synced " + formatTime(new Date()));
       },
       function (err) {
         setSync(messageOf(err));
@@ -553,18 +1081,27 @@
   }
 
   function boot() {
+    bindLog();
+    window.addEventListener("hashchange", route);
     if (!coreReady()) {
       setSync("Not synced");
+      route();
       return;
     }
-    try {
-      render(PianoCore.derive(PianoCore.blankStore(), PianoCore.dayKey(new Date())));
-    } catch (err) {
-      setSync(messageOf(err));
+    if (!hasToken()) {
+      enterDemo();
+    } else {
+      try {
+        state.doc = PianoCore.blankStore();
+        paint();
+      } catch (err) {
+        setSync(messageOf(err));
+      }
+      pull();
     }
-    pull();
     document.addEventListener("visibilitychange", function () {
-      if (document.visibilityState === "visible") pull();
+      if (document.visibilityState === "hidden") flushSave();
+      else if (document.visibilityState === "visible") pull();
     });
     setInterval(pull, 60000);
   }
