@@ -1,69 +1,87 @@
+/* Page chrome comes from /ui/shell.css. Keep this sheet transparent so the
+   fixed art and overlay stay visible, and map colours onto the kit tokens. */
+body.dx {
+  background: transparent;
+  color: var(--dx-text);
+  font-family: var(--dx-font);
+}
+
 main {
-  width: min(720px, 100%);
-  margin: 0 auto;
-  padding:
-    max(0.9rem, env(safe-area-inset-top))
-    max(1rem, env(safe-area-inset-right))
-    calc(2rem + env(safe-area-inset-bottom))
-    max(1rem, env(safe-area-inset-left));
-  font-family: var(--font-sans);
-  color: var(--ink);
+  background: transparent;
+  color: var(--dx-text);
+  font-family: var(--dx-font);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
-header.top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding-right: max(
-    0px,
-    calc(
-      max(0.75rem, env(safe-area-inset-right)) + 2.75rem + 0.35rem + 44px + 0.35rem -
-        max(1rem, env(safe-area-inset-right)) - (100vw - min(720px, 100vw)) / 2
-    )
-  );
+.dx-header .dx-title {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
-header.top h1 {
-  margin: 0;
-  flex-shrink: 0;
-  font-size: 1.4rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
+.dx-header .dx-actions {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.dx-header .dong-theme-toggle {
+  position: static;
+  top: auto;
+  right: auto;
+  flex: none;
+  width: 44px;
+  height: 44px;
+}
+
+.dx-header .dong-theme-toggle__knob {
+  top: 11px;
 }
 
 #sync {
   margin: 0;
   min-width: 0;
-  font-size: 0.8rem;
-  color: var(--text-dim);
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: var(--dx-muted);
   text-align: right;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* The theme toggle is fixed in the corner. Park the hub link beside it,
-   and keep the title row clear of both controls. */
-body > .dong-home-link {
-  position: fixed;
-  z-index: 1000;
-  margin-left: 0;
-  top: calc(max(0.75rem, env(safe-area-inset-top)) + (1.75rem - 44px) / 2);
-  right: calc(max(0.75rem, env(safe-area-inset-right)) + 2.75rem + 0.35rem);
+a.log-link {
+  width: 100%;
+  margin-top: 4px;
+  background: var(--dx-accent);
+  color: var(--dx-accent-fg);
+  border-radius: var(--dx-radius-sm);
+  font-family: var(--dx-font);
+}
+
+.dx-card:empty {
+  display: none;
 }
 
 section {
-  margin-top: 1.25rem;
+  margin-top: var(--dx-gap);
   min-width: 0;
 }
 
-section h2 {
+.dx-card {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--dx-text);
+}
+
+section h2,
+#log h2 {
+  font-family: var(--dx-font);
   font-size: 0.95rem;
   font-weight: 600;
   margin: 0 0 0.6rem;
   line-height: 1.3;
+  color: var(--dx-text);
 }
 
 section p {
@@ -71,10 +89,25 @@ section p {
 }
 
 .card {
-  background: var(--bg-card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 0.9rem 1rem;
+  background: var(--dx-card);
+  border: 1px solid var(--dx-border);
+  border-radius: var(--dx-radius);
+  padding: var(--dx-gap);
+  color: var(--dx-text);
+}
+
+.dx-card > .card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.dx-card > .card + .card {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--dx-border);
 }
 
 .stats {
@@ -89,7 +122,7 @@ section p {
 
 .stat .label,
 .stat > :first-child:not(:last-child) {
-  color: var(--text-dim);
+  color: var(--dx-muted);
   font-size: 0.75rem;
   font-weight: 400;
   line-height: 1.3;
@@ -101,6 +134,7 @@ section p {
   font-weight: 600;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
+  color: var(--dx-text);
 }
 
 .stats + .bar {
@@ -108,7 +142,7 @@ section p {
 }
 
 .bar {
-  background: var(--line);
+  background: var(--dx-border);
   height: 8px;
   border-radius: 99px;
   overflow: hidden;
@@ -116,7 +150,7 @@ section p {
 
 .bar > span {
   height: 100%;
-  background: var(--primary-hex);
+  background: var(--dx-accent);
   border-radius: 99px;
   display: block;
 }
@@ -131,7 +165,7 @@ section p {
 .heat i {
   aspect-ratio: 1;
   border-radius: 2px;
-  background: var(--primary-hex);
+  background: var(--dx-accent);
   display: block;
   min-width: 0;
 }
@@ -147,12 +181,12 @@ section p {
   margin-bottom: 3px;
   font-size: 0.65rem;
   line-height: 1;
-  color: var(--text-dim);
+  color: var(--dx-muted);
   text-align: center;
 }
 
 .muted {
-  color: var(--text-dim);
+  color: var(--dx-muted);
   line-height: 1.4;
 }
 
@@ -170,8 +204,9 @@ ol.tasks li + li {
   font-size: 0.75rem;
   padding: 0.1rem 0.4rem;
   border-radius: 99px;
-  background: var(--bg);
-  border: 1px solid var(--line);
+  background: var(--dx-card-solid);
+  color: var(--dx-text);
+  border: 1px solid var(--dx-border);
   margin-left: 0.35rem;
 }
 
@@ -179,7 +214,7 @@ svg.chart {
   width: 100%;
   height: 72px;
   display: block;
-  color: var(--primary-hex);
+  color: var(--dx-accent);
 }
 
 svg.chart polyline,
@@ -202,75 +237,56 @@ a {
   overflow-wrap: anywhere;
 }
 
+.dx-card a:not(.dx-btn) {
+  color: var(--dx-accent);
+}
+
 .insight {
   padding: 0.45rem 0;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--dx-border);
   line-height: 1.4;
-}
-
-header.top {
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-a.log-link {
-  flex: 1 0 100%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  margin-top: 0.65rem;
-  padding: 0 0.9rem;
-  border-radius: var(--radius, 0.5rem);
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  text-decoration: none;
-  font-weight: 600;
-  font-size: 0.95rem;
-  line-height: 1;
-}
-
-a.log-link:hover,
-a.log-link:focus-visible {
-  filter: brightness(1.05);
 }
 
 .demo-banner,
 .format-banner {
-  margin: 0.9rem 0 0;
+  margin: var(--dx-gap) 0 0;
   padding: 0.7rem 0.85rem;
-  border-radius: var(--radius, 0.5rem);
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--secondary));
-  color: hsl(var(--secondary-foreground));
+  border-radius: var(--dx-radius);
+  border: 1px solid var(--dx-border);
+  background: var(--dx-card);
+  color: var(--dx-text);
   font-weight: 600;
   line-height: 1.4;
 }
 
 .format-banner {
-  background: hsl(var(--destructive));
-  color: hsl(var(--destructive-foreground));
+  background: #9f1239;
+  color: #ffffff;
   border-color: transparent;
 }
 
+#log .log-back {
+  margin: var(--dx-gap) 0 0;
+}
+
 #log .log-back a {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  font-weight: 600;
-  color: hsl(var(--primary));
   text-decoration: none;
+  background: var(--dx-card);
+  color: var(--dx-text);
+  border: 1px solid var(--dx-border);
+  border-radius: var(--dx-radius-sm);
+  font-family: var(--dx-font);
 }
 
 #log h2 {
-  margin-top: 0.2rem;
+  margin-top: 0;
 }
 
 #log-form {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  margin-top: 0.6rem;
+  margin-top: var(--dx-gap);
 }
 
 #log-form label {
@@ -280,6 +296,7 @@ a.log-link:focus-visible {
   min-width: 0;
   font-size: 0.85rem;
   font-weight: 600;
+  color: var(--dx-text);
 }
 
 #log-form input,
@@ -289,11 +306,11 @@ a.log-link:focus-visible {
   min-height: 44px;
   margin: 0;
   padding: 0.5rem 0.7rem;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius, 0.5rem);
-  background: hsl(var(--card));
-  color: hsl(var(--foreground));
-  font: inherit;
+  border: 1px solid var(--dx-border);
+  border-radius: var(--dx-radius-sm);
+  background: var(--dx-card-solid);
+  color: var(--dx-text);
+  font-family: var(--dx-font);
   font-size: 1rem;
   font-weight: 400;
 }
@@ -315,31 +332,31 @@ a.log-link:focus-visible {
   min-height: 44px;
   min-width: 44px;
   padding: 0 0.85rem;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius, 0.5rem);
-  background: hsl(var(--secondary));
-  color: hsl(var(--secondary-foreground));
-  font: inherit;
+  border: 1px solid var(--dx-border);
+  border-radius: var(--dx-radius-sm);
+  background: var(--dx-card-solid);
+  color: var(--dx-text);
+  font-family: var(--dx-font);
   font-weight: 600;
   cursor: pointer;
 }
 
 .chips button[aria-pressed="true"] {
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
+  background: var(--dx-accent);
+  color: var(--dx-accent-fg);
   border-color: transparent;
 }
 
 .log-error {
   margin: 0;
-  color: hsl(0 72% 38%);
+  color: #9f1239;
   font-size: 0.9rem;
   font-weight: 600;
   line-height: 1.4;
 }
 
 html.dark .log-error {
-  color: hsl(0 84% 74%);
+  color: #fecdd3;
 }
 
 .log-actions {
@@ -350,29 +367,30 @@ html.dark .log-error {
 
 #log-save {
   flex: 1 1 8rem;
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
+  background: var(--dx-accent);
+  color: var(--dx-accent-fg);
   border-color: transparent;
 }
 
 #log-summary,
 #log-list {
   min-width: 0;
+  margin-top: var(--dx-gap);
 }
 
-#log-summary {
-  margin-top: 1.25rem;
-}
-
-#log-summary > h2,
 #log-list > h2 {
   margin-top: 1rem;
+}
+
+#log-list > h2:first-child {
+  margin-top: 0;
 }
 
 .log-total {
   font-size: 1.2rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+  color: var(--dx-text);
 }
 
 .log-row {
@@ -385,7 +403,7 @@ html.dark .log-error {
 }
 
 .log-row + .log-row {
-  border-top: 1px solid hsl(var(--border));
+  border-top: 1px solid var(--dx-border);
 }
 
 .log-row-text {
@@ -399,6 +417,14 @@ html.dark .log-error {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--dx-accent);
+  outline-offset: 2px;
 }
 
 [hidden] {
