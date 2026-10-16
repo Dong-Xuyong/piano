@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "schemaVersion": 2,
+  "owner": "brook",
+  "updatedAt": null,
+  "profile": {
+    "weeklyMinutesGoal": null,
+    "minimumSessionMinutes": 10
+  },
+  "pieces": {},
+  "sessions": {},
+  "recordings": [],
+  "plan": {
+    "updatedAt": null,
+    "next": [],
+    "coachNote": ""
+  }
+}

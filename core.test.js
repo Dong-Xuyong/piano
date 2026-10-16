@@ -38,7 +38,31 @@ function heatmapDay(heatmap, date) {
   return null;
 }
 
-assert.deepStrictEqual(Object.keys(PianoCore).sort(), ["blankStore", "dayKey", "derive", "shift"]);
+assert.deepStrictEqual(Object.keys(PianoCore).sort(), [
+  "SCHEMA_VERSION",
+  "addEntry",
+  "blankStore",
+  "dayKey",
+  "deleteEntry",
+  "demoDoc",
+  "derive",
+  "editEntry",
+  "entriesForWeek",
+  "entryLabel",
+  "isConflict",
+  "liveEntries",
+  "mergeEntries",
+  "minutesByPiece",
+  "normalizeEntries",
+  "pieceChoices",
+  "saveWithRetry",
+  "schemaVersionOf",
+  "seedDoc",
+  "shift",
+  "todayKey",
+  "weekDates"
+]);
+assert.strictEqual(PianoCore.SCHEMA_VERSION, 2);
 assert.strictEqual(PianoCore.dayKey(new Date(2026, 9, 6)), "2026-10-06");
 assert.strictEqual(PianoCore.shift("2026-10-06", -1), "2026-10-05");
 assert.strictEqual(PianoCore.shift("2026-03-29", 1), "2026-03-30");
@@ -361,4 +385,491 @@ assert.strictEqual(garbage.pieces.length, 1);
 assert.strictEqual(garbage.pieces[0].id, "p");
 assert.strictEqual(garbage.pieces[0].title, "");
 
-console.log("pass");
+assert.deepStrictEqual(PianoCore.seedDoc(), require("./piano.seed.json"));
+assert.strictEqual(PianoCore.todayKey(new Date("2026-10-16T22:30:00.000Z")), "2026-10-16");
+assert.strictEqual(PianoCore.todayKey(new Date("2026-10-16T23:30:00.000Z")), "2026-10-17");
+assert.deepStrictEqual(PianoCore.weekDates("2026-01-14"), [
+  "2026-01-12",
+  "2026-01-13",
+  "2026-01-14",
+  "2026-01-15",
+  "2026-01-16",
+  "2026-01-17",
+  "2026-01-18"
+]);
+
+var NOW = "2026-01-10T18:00:00.000Z";
+var NOW2 = "2026-01-10T19:00:00.000Z";
+
+function legacyFixture() {
+  return {
+    version: 1,
+    customFlag: { keep: true },
+    profile: { weeklyMinutesGoal: 90, minimumSessionMinutes: 10 },
+    pieces: {
+      "example-etude": {
+        title: "EXAMPLE Etude",
+        composer: "EXAMPLE",
+        status: "learning",
+        targetBpm: 80,
+        sections: [{ id: "opening", bars: "1-8", label: "Opening", targetBpm: 80 }]
+      },
+      "example-waltz": {
+        title: "EXAMPLE Waltz",
+        composer: "EXAMPLE",
+        status: "planned",
+        targetBpm: null,
+        sections: []
+      }
+    },
+    sessions: {
+      "2026-01-09": {
+        updatedAt: "2026-01-09T12:00:00.000Z",
+        minutes: 15,
+        pieces: [],
+        ear: [],
+        sight: [],
+        note: "untouched",
+        room: "A"
+      },
+      "2026-01-10": {
+        updatedAt: "2026-01-10T12:00:00.000Z",
+        minutes: 30,
+        pieces: [{ pieceId: "example-etude", sectionId: "opening", cleanBpm: 60, hands: "together" }],
+        ear: [{ app: "Tenuto", drill: "intervals", correct: 3, total: 4 }],
+        sight: [{ app: "SRF", level: 2, correct: 5, total: 8 }],
+        note: "keep me",
+        room: "B"
+      }
+    },
+    recordings: [
+      { date: "2026-01-09", pieceId: "example-etude", sectionId: "opening", bpm: 70, url: "https://example.test/a", note: "EXAMPLE take" }
+    ],
+    plan: {
+      updatedAt: "2026-01-09T12:00:00.000Z",
+      next: ["EXAMPLE one", "EXAMPLE two", "EXAMPLE three"],
+      coachNote: "EXAMPLE stay with the pulse."
+    }
+  };
+}
+
+function dayFields(day) {
+  return {
+    note: day.note,
+    pieces: day.pieces,
+    ear: day.ear,
+    sight: day.sight,
+    room: day.room
+  };
+}
+
+function scrub(doc, date) {
+  var copy = JSON.parse(JSON.stringify(doc));
+  delete copy.updatedAt;
+  delete copy.schemaVersion;
+  delete copy.owner;
+  var day = copy.sessions[date];
+  delete day.minutes;
+  delete day.entries;
+  delete day.updatedAt;
+  return JSON.stringify(copy);
+}
+
+var original = legacyFixture();
+var originalJson = JSON.stringify(original);
+var beforeFields = dayFields(original.sessions["2026-01-10"]);
+var added = PianoCore.addEntry(original, "2026-01-10", {
+  id: "ps_new001",
+  minutes: 20,
+  pieceId: "example-etude",
+  pieceTitle: "ignored",
+  note: "new block"
+}, NOW);
+assert.strictEqual(JSON.stringify(original), originalJson, "addEntry does not mutate");
+var addedDay = added.sessions["2026-01-10"];
+assert.strictEqual(addedDay.entries.length, 2, "legacy plus new");
+assert.strictEqual(addedDay.entries[0].id, "ps_legacy");
+assert.strictEqual(addedDay.entries[0].minutes, 30);
+assert.strictEqual(addedDay.entries[0].source, "legacy");
+assert.strictEqual(addedDay.entries[0].pieceId, null);
+assert.strictEqual(addedDay.entries[0].pieceTitle, "");
+assert.strictEqual(addedDay.entries[1].id, "ps_new001");
+assert.strictEqual(addedDay.entries[1].minutes, 20);
+assert.strictEqual(addedDay.entries[1].source, "app");
+assert.strictEqual(addedDay.entries[1].pieceTitle, "", "pieceTitle is empty when pieceId is set");
+assert.strictEqual(addedDay.minutes, 50);
+assert.deepStrictEqual(dayFields(addedDay), beforeFields);
+assert.strictEqual(added.version, 1);
+assert.strictEqual(added.schemaVersion, 2);
+assert.strictEqual(added.owner, "brook");
+assert.strictEqual(added.updatedAt, NOW);
+assert.deepStrictEqual(added.pieces, original.pieces);
+assert.deepStrictEqual(added.plan, original.plan);
+assert.deepStrictEqual(added.recordings, original.recordings);
+assert.deepStrictEqual(added.customFlag, original.customFlag);
+assert.strictEqual(JSON.stringify(added.sessions["2026-01-09"]), JSON.stringify(original.sessions["2026-01-09"]));
+
+var logged = PianoCore.derive(added, "2026-01-10");
+assert.strictEqual(logged.consistency.weekMinutes, 65, "15 on Monday plus 50 on Saturday");
+assert.strictEqual(heatmapDay(logged.heatmap, "2026-01-10").minutes, 50);
+assert.ok(added.sessions["2026-01-10"].minutes > 0, "hub Today check reads minutes");
+assert.strictEqual(logged.consistency.streak >= 1, true);
+
+var removed = PianoCore.deleteEntry(added, "2026-01-10", "ps_new001", NOW2);
+assert.strictEqual(removed.sessions["2026-01-10"].minutes, 30);
+assert.strictEqual(removed.sessions["2026-01-10"].entries.length, 2, "tombstone stays");
+assert.strictEqual(removed.sessions["2026-01-10"].entries[1].deleted, true);
+assert.strictEqual(PianoCore.liveEntries(removed.sessions["2026-01-10"]).length, 1);
+assert.strictEqual(PianoCore.liveEntries(removed.sessions["2026-01-10"])[0].id, "ps_legacy");
+assert.deepStrictEqual(dayFields(removed.sessions["2026-01-10"]), beforeFields);
+assert.strictEqual(PianoCore.derive(removed, "2026-01-10").consistency.weekMinutes, 45);
+
+var v1 = legacyFixture();
+assert.strictEqual(PianoCore.schemaVersionOf(v1), 1);
+assert.doesNotThrow(function () { PianoCore.derive(v1, "2026-01-10"); });
+var savedV1 = PianoCore.addEntry(v1, "2026-01-10", {
+  id: "ps_new001",
+  minutes: 20,
+  pieceId: null,
+  pieceTitle: "EXAMPLE other",
+  note: ""
+}, NOW);
+var mergedV1 = PianoCore.mergeEntries(savedV1, v1);
+assert.strictEqual(mergedV1.schemaVersion, 2);
+assert.strictEqual(mergedV1.owner, "brook");
+assert.strictEqual(mergedV1.version, 1);
+assert.strictEqual(scrub(mergedV1, "2026-01-10"), scrub(v1, "2026-01-10"));
+assert.strictEqual(JSON.stringify(mergedV1.sessions["2026-01-09"]), JSON.stringify(v1.sessions["2026-01-09"]));
+assert.deepStrictEqual(mergedV1.pieces, v1.pieces, "free text does not add a piece");
+var otherEntry = mergedV1.sessions["2026-01-10"].entries.filter(function (entry) {
+  return entry.id === "ps_new001";
+})[0];
+assert.strictEqual(otherEntry.pieceId, null);
+assert.strictEqual(otherEntry.pieceTitle, "EXAMPLE other");
+
+var remote = legacyFixture();
+remote.plan = {
+  updatedAt: "2026-02-01T00:00:00.000Z",
+  next: ["EXAMPLE remote one", "EXAMPLE remote two", "EXAMPLE remote three"],
+  coachNote: "EXAMPLE remote plan."
+};
+remote.pieces = {
+  "example-waltz": {
+    title: "EXAMPLE Waltz",
+    composer: "EXAMPLE",
+    status: "learning",
+    targetBpm: 100,
+    sections: []
+  }
+};
+remote.customFlag = { keep: "remote" };
+remote.sessions["2026-01-10"] = {
+  updatedAt: "2026-01-10T12:00:00.000Z",
+  minutes: 15,
+  pieces: [{ pieceId: "example-waltz", sectionId: "opening", cleanBpm: 40, hands: "left" }],
+  ear: [],
+  sight: [],
+  note: "remote note",
+  room: "C",
+  entries: [{
+    id: "ps_brook1",
+    at: "2026-01-10T16:00:00.000Z",
+    minutes: 15,
+    pieceId: "example-waltz",
+    pieceTitle: "",
+    note: "bot block",
+    source: "brook",
+    updatedAt: "2026-01-10T16:00:00.000Z",
+    marker: "keep"
+  }]
+};
+var localEntry = PianoCore.addEntry(legacyFixture(), "2026-01-10", {
+  id: "ps_app001",
+  minutes: 20,
+  pieceId: "example-etude",
+  note: "app block"
+}, NOW);
+var mergedBoth = PianoCore.mergeEntries(localEntry, remote);
+var bothIds = mergedBoth.sessions["2026-01-10"].entries.map(function (entry) { return entry.id; });
+assert.ok(bothIds.indexOf("ps_brook1") !== -1);
+assert.ok(bothIds.indexOf("ps_app001") !== -1);
+assert.ok(bothIds.indexOf("ps_legacy") !== -1, "local legacy conversion is kept");
+assert.strictEqual(mergedBoth.sessions["2026-01-10"].minutes, 65, "30 legacy + 20 app + 15 brook");
+assert.deepStrictEqual(mergedBoth.plan, remote.plan);
+assert.deepStrictEqual(mergedBoth.pieces, remote.pieces);
+assert.deepStrictEqual(mergedBoth.customFlag, remote.customFlag);
+assert.strictEqual(mergedBoth.sessions["2026-01-10"].note, "remote note");
+assert.strictEqual(mergedBoth.sessions["2026-01-10"].room, "C");
+assert.deepStrictEqual(mergedBoth.sessions["2026-01-10"].pieces, remote.sessions["2026-01-10"].pieces);
+assert.strictEqual(mergedBoth.recordings[0].note, "EXAMPLE take");
+var brookKept = mergedBoth.sessions["2026-01-10"].entries.filter(function (entry) {
+  return entry.id === "ps_brook1";
+})[0];
+assert.strictEqual(brookKept.marker, "keep");
+
+var sameDay = {
+  version: 1,
+  profile: { weeklyMinutesGoal: null, minimumSessionMinutes: 10 },
+  pieces: {},
+  sessions: {
+    "2026-01-10": {
+      updatedAt: "2026-01-10T12:00:00.000Z",
+      minutes: 10,
+      pieces: [],
+      ear: [],
+      sight: [],
+      note: "",
+      entries: [{
+        id: "ps_same01",
+        at: null,
+        minutes: 10,
+        pieceId: null,
+        pieceTitle: "",
+        note: "remote",
+        source: "brook",
+        updatedAt: "2026-10-16T08:30:00Z"
+      }]
+    }
+  },
+  recordings: [],
+  plan: { updatedAt: null, next: [], coachNote: "" }
+};
+var localSame = JSON.parse(JSON.stringify(sameDay));
+localSame.sessions["2026-01-10"].entries[0] = {
+  id: "ps_same01",
+  at: null,
+  minutes: 10,
+  pieceId: null,
+  pieceTitle: "",
+  note: "local",
+  source: "app",
+  updatedAt: "2026-10-16T10:00:00+01:00"
+};
+localSame.schemaVersion = 2;
+localSame.owner = "brook";
+localSame.updatedAt = "2026-10-16T09:00:00.000Z";
+var newerWins = PianoCore.mergeEntries(localSame, sameDay);
+assert.strictEqual(newerWins.sessions["2026-01-10"].entries[0].note, "local");
+assert.strictEqual(newerWins.sessions["2026-01-10"].minutes, 10);
+
+var tieRemote = JSON.parse(JSON.stringify(sameDay));
+tieRemote.sessions["2026-01-10"].entries[0].updatedAt = "2026-01-02T00:00:00.000Z";
+tieRemote.sessions["2026-01-10"].entries[0].note = "remote";
+var tieLocal = JSON.parse(JSON.stringify(tieRemote));
+tieLocal.sessions["2026-01-10"].entries[0].updatedAt = "2026-01-02T00:00:00+00:00";
+tieLocal.sessions["2026-01-10"].entries[0].note = "local";
+tieLocal.schemaVersion = 2;
+tieLocal.owner = "brook";
+tieLocal.updatedAt = "2026-01-02T00:00:00.000Z";
+assert.strictEqual(PianoCore.mergeEntries(tieLocal, tieRemote).sessions["2026-01-10"].entries[0].note, "remote");
+
+var normalized = PianoCore.normalizeEntries({
+  entries: [{
+    id: "ps_demo01",
+    minutes: 5,
+    pieceId: null,
+    pieceTitle: "EXAMPLE scale",
+    note: "",
+    source: "app",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    extra: 1,
+    deleted: true
+  }]
+});
+assert.strictEqual(normalized.length, 1);
+assert.strictEqual(normalized[0].extra, 1);
+assert.strictEqual(normalized[0].deleted, true);
+assert.strictEqual(PianoCore.liveEntries({ entries: normalized }).length, 0);
+
+var choices = PianoCore.pieceChoices(legacyFixture(), "");
+assert.deepStrictEqual(choices.map(function (piece) { return piece.id; }), ["example-etude"]);
+var withPlanned = PianoCore.pieceChoices(legacyFixture(), "example-waltz");
+assert.deepStrictEqual(withPlanned.map(function (piece) { return piece.id; }), ["example-etude", "example-waltz"]);
+
+var demo = PianoCore.demoDoc();
+assert.strictEqual(demo.pieces["example-etude"].title.indexOf("EXAMPLE"), 0);
+assert.strictEqual(demo.pieces["example-waltz"].title.indexOf("EXAMPLE"), 0);
+var weekRows = PianoCore.entriesForWeek(demo, "2026-01-14");
+assert.deepStrictEqual(weekRows.map(function (row) { return row.entry.id; }), ["ps_demo02", "ps_demo01"]);
+assert.deepStrictEqual(PianoCore.minutesByPiece(demo, PianoCore.weekDates("2026-01-14")), [
+  { pieceId: "example-etude", pieceTitle: "EXAMPLE Etude", minutes: 20 },
+  { pieceId: null, pieceTitle: "EXAMPLE scale", minutes: 10 }
+]);
+assert.strictEqual(PianoCore.entryLabel(demo, demo.sessions["2026-01-13"]), "Unspecified");
+
+var legacyEdited = PianoCore.editEntry(added, "2026-01-10", "ps_legacy", {
+  minutes: 5,
+  note: "nope",
+  pieceId: "example-etude",
+  pieceTitle: "ignored"
+}, NOW2);
+assert.strictEqual(legacyEdited.sessions["2026-01-10"].entries[0].minutes, 30);
+assert.strictEqual(legacyEdited.sessions["2026-01-10"].entries[0].note, "");
+assert.strictEqual(legacyEdited.sessions["2026-01-10"].entries[0].pieceId, "example-etude");
+assert.strictEqual(legacyEdited.sessions["2026-01-10"].entries[0].pieceTitle, "");
+assert.strictEqual(legacyEdited.sessions["2026-01-10"].minutes, 50);
+
+function runConflictWalk() {
+  var fs = require("fs");
+  var vm = require("vm");
+  var memory = new Map();
+  var localStorage = {
+    getItem: function (key) { return memory.has(key) ? memory.get(key) : null; },
+    setItem: function (key, value) { memory.set(key, String(value)); },
+    removeItem: function (key) { memory.delete(key); }
+  };
+  var calls = [];
+  var handler = function () { return Promise.reject(new Error("fetch not stubbed")); };
+  var confirms = [];
+  function encodeContent(data) {
+    return Buffer.from(unescape(encodeURIComponent(JSON.stringify(data))), "binary").toString("base64");
+  }
+  function decodeContent(b64) {
+    return JSON.parse(decodeURIComponent(escape(Buffer.from(String(b64).replace(/\s/g, ""), "base64").toString("binary"))));
+  }
+  function response(status, body) {
+    return { status: status, ok: status >= 200 && status < 300, json: function () { return Promise.resolve(body); } };
+  }
+  var context = vm.createContext({
+    localStorage: localStorage,
+    console: console,
+    JSON: JSON,
+    Object: Object,
+    Array: Array,
+    Error: Error,
+    Promise: Promise,
+    Date: Date,
+    String: String,
+    Number: Number,
+    unescape: unescape,
+    escape: escape,
+    encodeURIComponent: encodeURIComponent,
+    decodeURIComponent: decodeURIComponent,
+    btoa: function (value) { return Buffer.from(value, "binary").toString("base64"); },
+    atob: function (value) { return Buffer.from(value, "base64").toString("binary"); },
+    fetch: function (url, opts) {
+      calls.push({ url: url, method: opts && opts.method, body: opts && opts.body, headers: opts && opts.headers });
+      return handler(url, opts || {});
+    },
+    confirm: function (msg) { confirms.push(msg); return false; },
+    prompt: function () { return null; }
+  });
+  context.window = context;
+  context.globalThis = context;
+  vm.runInContext(fs.readFileSync(require("path").join(__dirname, "dong-ui/gh-sync.js"), "utf8"), context);
+  localStorage.setItem("dong-gh-sync", JSON.stringify({
+    token: "test-token",
+    repo: "Dong-Xuyong/progress-sync"
+  }));
+  var file = "https://api.github.com/repos/Dong-Xuyong/progress-sync/contents/piano.json";
+  var remoteFile = legacyFixture();
+  remoteFile.sessions["2026-01-10"].entries = [{
+    id: "ps_brook1",
+    at: null,
+    minutes: 15,
+    pieceId: null,
+    pieceTitle: "EXAMPLE brook",
+    note: "bot",
+    source: "brook",
+    updatedAt: "2026-01-10T15:00:00.000Z"
+  }];
+  remoteFile.sessions["2026-01-10"].minutes = 15;
+  var remotePlan = {
+    updatedAt: "2026-02-02T00:00:00.000Z",
+    next: ["EXAMPLE after conflict", "EXAMPLE still three", "EXAMPLE tasks"],
+    coachNote: "EXAMPLE remote wins."
+  };
+  var sawConflict = false;
+  handler = function (url, opts) {
+    if (url !== file) return Promise.reject(new Error("unexpected url " + url));
+    if (!opts.headers || opts.headers.Authorization !== "Bearer test-token") {
+      return Promise.reject(new Error("missing authorization"));
+    }
+    if (opts.method === "GET") {
+      var payload = JSON.parse(JSON.stringify(remoteFile));
+      if (sawConflict) payload.plan = remotePlan;
+      return Promise.resolve(response(200, {
+        sha: sawConflict ? "sha-new" : "sha-old",
+        content: encodeContent(payload)
+      }));
+    }
+    var body = JSON.parse(opts.body);
+    if (!sawConflict) {
+      if (body.sha !== "sha-old") return Promise.reject(new Error("first put sha"));
+      sawConflict = true;
+      return Promise.resolve(response(409, {}));
+    }
+    if (body.sha !== "sha-new") return Promise.reject(new Error("retry put sha"));
+    return Promise.resolve(response(200, {}));
+  };
+  var doc = PianoCore.addEntry(legacyFixture(), "2026-01-10", {
+    id: "ps_app001",
+    minutes: 20,
+    pieceId: null,
+    pieceTitle: "EXAMPLE app",
+    note: "from the app"
+  }, NOW);
+  function saveOnce() {
+    return context.GhSync.save(APP_ID_CONFLICT, function () {
+      return doc;
+    }, function (remoteDoc) {
+      doc = PianoCore.mergeEntries(doc, remoteDoc);
+    }, { quiet: true });
+  }
+  var APP_ID_CONFLICT = "piano";
+  return PianoCore.saveWithRetry(saveOnce).then(function (message) {
+    assert.strictEqual(message, "Saved to GitHub");
+    assert.strictEqual(confirms.length, 0, "quiet save does not confirm");
+    assert.deepStrictEqual(calls.map(function (call) { return call.method; }), ["GET", "PUT", "GET", "PUT"]);
+    var puts = calls.filter(function (call) { return call.method === "PUT"; });
+    assert.strictEqual(JSON.parse(puts[0].body).sha, "sha-old");
+    assert.strictEqual(JSON.parse(puts[1].body).sha, "sha-new");
+    puts.forEach(function (call) {
+      assert.ok(call.url.indexOf("/piano.json") !== -1);
+      assert.ok(call.url.indexOf("progress-sync") !== -1);
+    });
+    var written = decodeContent(JSON.parse(puts[1].body).content);
+    assert.strictEqual(written.version, 1);
+    assert.strictEqual(written.schemaVersion, 2);
+    assert.strictEqual(written.owner, "brook");
+    assert.deepStrictEqual(written.plan, remotePlan);
+    assert.deepStrictEqual(written.pieces, remoteFile.pieces);
+    var ids = written.sessions["2026-01-10"].entries.map(function (entry) { return entry.id; });
+    assert.ok(ids.indexOf("ps_legacy") !== -1);
+    assert.ok(ids.indexOf("ps_app001") !== -1);
+    assert.ok(ids.indexOf("ps_brook1") !== -1);
+    assert.strictEqual(written.sessions["2026-01-10"].minutes, 65);
+    assert.strictEqual(JSON.stringify(written.sessions["2026-01-09"]), JSON.stringify(remoteFile.sessions["2026-01-09"]));
+    calls.length = 0;
+    var failures = 0;
+    handler = function (url, opts) {
+      if (opts.method === "GET") {
+        return Promise.resolve(response(200, { sha: "sha-x", content: encodeContent(remoteFile) }));
+      }
+      failures += 1;
+      return Promise.resolve(response(409, {}));
+    };
+    doc = PianoCore.addEntry(doc, "2026-01-11", {
+      id: "ps_app002",
+      minutes: 10,
+      pieceId: null,
+      pieceTitle: "EXAMPLE again",
+      note: ""
+    }, NOW2);
+    return PianoCore.saveWithRetry(saveOnce).then(function () {
+      throw new Error("second conflict should reject");
+    }, function (err) {
+      assert.strictEqual(PianoCore.isConflict(err), true);
+      assert.strictEqual(failures, 2, "one retry, then stop");
+    });
+  });
+}
+
+var APP_ID_CONFLICT = "piano";
+
+runConflictWalk().then(function () {
+  console.log("pass");
+}).catch(function (err) {
+  console.error(err);
+  process.exit(1);
+});

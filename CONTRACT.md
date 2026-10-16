@@ -1,6 +1,6 @@
 # Piano writer contract
 
-Write the user's piano practice log into the private GitHub repo `Dong-Xuyong/progress-sync`, file `piano.json`, with the GitHub Contents API. The website reads this file itself. The website is read-only. It does not edit sessions, pieces, recordings, or the plan. Grok is the only writer.
+Write the user's piano practice log into the private GitHub repo `Dong-Xuyong/progress-sync`, file `piano.json`, with the GitHub Contents API. The website reads this file itself. The dashboard does not edit pieces, recordings, or the plan. The Log practice screen writes practice entries only; see "Practice entries" at the end of this file. Brook is the bot writer of every other field.
 
 ## File shape
 
@@ -58,4 +58,30 @@ Version 1. This is the starting file. Do not invent a weekly goal, a tempo, a se
 - Never delete a day, piece, recording, or key you did not intend to change. Preserve every other key.
 - Repo: `Dong-Xuyong/progress-sync`. Path: `piano.json`. API: `PUT https://api.github.com/repos/Dong-Xuyong/progress-sync/contents/piano.json` with `Authorization: Bearer <token>`, `message` `"Save piano log"`, `content` as base64 of the full JSON, and `sha`.
 - Token: a fine-grained PAT with Contents read and write on `Dong-Xuyong/progress-sync` only. Do not put the token in the repo.
-- The website is read-only. Nothing on the page is editable. Grok is the only writer.
+- The dashboard is not editable. The Log practice screen writes practice entries; see "Practice entries" at the end of this file. Brook is the bot writer of every other field.
+
+## Practice entries (schemaVersion 2, added 2026-10)
+
+You are Brook, the only bot writer of `piano.json`. Every v1 rule above still holds, with one exception: the website is no longer read-only. The "Log practice" screen at https://dong-xuyong.github.io/piano/#/log writes practice entries, and it merges by id before every save.
+
+Top level: add `"schemaVersion": 2`, `"owner": "brook"`, and `"updatedAt"` (ISO-8601, set on every write). Keep `"version": 1` and every existing key.
+
+Each day in `sessions[YYYY-MM-DD]` may have `entries`, an array of practice blocks:
+
+- `id`: `ps_` plus 6 characters from `a-z` and `0-9`, or `ps_legacy` (see below).
+- `at`: ISO-8601 time the block started, or `null`.
+- `minutes`: a number greater than 0.
+- `pieceId`: a key in `pieces`, or `null`.
+- `pieceTitle`: free text when `pieceId` is `null`. Use `""` when `pieceId` is set.
+- `note`: Dong's words, or `""`.
+- `source`: `app`, `brook`, or `legacy`.
+- `updatedAt`: ISO-8601.
+- `deleted`: optional `true`. Never remove an entry.
+
+Rules:
+
+- The day's `minutes` stays the day total, because the hub's Today check and the streak read it. When a day has at least one entry without `deleted`, set `minutes` to the sum of those entries' `minutes`. Recompute it after every change and after every merge.
+- Converting a legacy day. If a day has `minutes` greater than 0 and no `entries`, the first writer that adds an entry first inserts `{ "id": "ps_legacy", "at": null, "minutes": <old minutes>, "pieceId": null, "pieceTitle": "", "note": "", "source": "legacy", "updatedAt": <now> }`, then appends the new entry. The day-level `note`, `pieces`, `ear`, and `sight` are never changed by this conversion.
+- When Dong tells you the piece for a legacy block, edit `ps_legacy`: set `pieceId` and bump `updatedAt`.
+- On 409, GET again. Union `entries` by `id` per day, and the newer `updatedAt` wins. Recompute `minutes`. For every other key, keep the v1 rule: re-apply only your own change. Then PUT once more. If that PUT also returns 409, stop and report the error.
+- `pieces`, `recordings`, `plan`, `profile`, and the v1 day fields are still written only by you. The app never writes them.
