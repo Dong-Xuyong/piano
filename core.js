@@ -1203,14 +1203,12 @@
     var msg = "";
     if (err && typeof err.message === "string") msg = err.message;
     else if (typeof err === "string") msg = err;
-    return msg.indexOf("another device") !== -1;
+    return (err && err.status === 409) || msg.indexOf("another device") !== -1;
   }
 
+  // One retry path: gh-sync.js re-fetches, merges and retries a 409 once itself.
   function saveWithRetry(saveFn) {
     return Promise.resolve().then(function () {
-      return saveFn();
-    }).catch(function (err) {
-      if (!isConflict(err)) return Promise.reject(err);
       return saveFn();
     });
   }
