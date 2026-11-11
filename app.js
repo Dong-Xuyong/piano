@@ -310,6 +310,146 @@
     return "";
   }
 
+  var DEFAULT_REPO = "Dong-Xuyong/progress-sync";
+
+  function syncConfig() {
+    try {
+      var raw = localStorage.getItem("dong-gh-sync");
+      if (!raw) return null;
+      var cfg = JSON.parse(raw);
+      if (!cfg || typeof cfg.token !== "string" || !cfg.token) return null;
+      var repo = DEFAULT_REPO;
+      if (typeof cfg.repo === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(cfg.repo)) {
+        repo = cfg.repo;
+      }
+      return { token: cfg.token, repo: repo };
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function githubHeaders(cfg, accept) {
+    return {
+      Authorization: "Bearer " + cfg.token,
+      Accept: accept
+    };
+  }
+
+  function bufferToPdf(res) {
+    if (res.status === 401) {
+      try { localStorage.removeItem("dong-gh-sync"); } catch (err) {}
+      throw new Error("GitHub token rejected; you will be asked for a new one");
+    }
+    if (!res.ok) throw new Error("GitHub error " + res.status);
+    return res.arrayBuffer().then(function (buf) {
+      if (!buf || !buf.byteLength) throw new Error("Sheet music file was empty");
+      return new Blob([buf], { type: "application/pdf" });
+    });
+  }
+
+  // Contents API JSON stops at 1 MB. Raw covers the PDF sizes we store; a 403
+  // falls through to the git blob endpoint, which serves the same bytes.
+  function fetchScoreViaBlob(cfg, contentsUrl) {
+    return fetch(contentsUrl, {
+      method: "GET",
+      cache: "no-store",
+      headers: githubHeaders(cfg, "application/vnd.github+json")
+    }).then(function (res) {
+      if (res.status === 401) {
+        try { localStorage.removeItem("dong-gh-sync"); } catch (err) {}
+        throw new Error("GitHub token rejected; you will be asked for a new one");
+      }
+      if (!res.ok) throw new Error("GitHub error " + res.status);
+      return res.json();
+    }).then(function (meta) {
+      var sha = meta && typeof meta.sha === "string" ? meta.sha : "";
+      if (!/^[0-9a-f]{40}$/i.test(sha) && !/^[0-9a-f]{64}$/i.test(sha)) {
+        throw new Error("GitHub error 403");
+      }
+      return fetch("https://api.github.com/repos/" + cfg.repo + "/git/blobs/" + sha, {
+        method: "GET",
+        cache: "no-store",
+        headers: githubHeaders(cfg, "application/vnd.github.raw")
+      });
+    }).then(bufferToPdf);
+  }
+
+  function fetchScoreBlob(scorePath) {
+    var cfg = syncConfig();
+    if (!cfg) return Promise.reject(new Error("Connect GitHub to open sheet music"));
+    var url;
+    try {
+      url = PianoCore.scoreContentsUrl(cfg.repo, scorePath);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+    if (!url) return Promise.reject(new Error("No sheet music for this piece"));
+    return fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: githubHeaders(cfg, "application/vnd.github.raw")
+    }).then(function (res) {
+      if (res.status === 403) return fetchScoreViaBlob(cfg, url);
+      return bufferToPdf(res);
+    }, function () {
+      return Promise.reject(new Error("Could not reach GitHub"));
+    });
+  }
+
+  function openScore(scorePath) {
+    if (!hasToken()) {
+      setSync("Connect GitHub to open sheet music");
+      return;
+    }
+    var tab = window.open("", "_blank");
+    if (!tab) {
+      setSync("Allow popups to open sheet music");
+      return;
+    }
+    try {
+      tab.document.title = "Sheet music";
+      if (tab.document.body) tab.document.body.textContent = "Loading sheet music\u2026";
+    } catch (err) {}
+    try {
+      tab.opener = null;
+    } catch (err) {}
+    var pending;
+    try {
+      pending = fetchScoreBlob(scorePath);
+    } catch (err) {
+      try { tab.close(); } catch (closeErr) {}
+      setSync(messageOf(err));
+      return;
+    }
+    pending.then(function (blob) {
+      if (!tab || tab.closed) return;
+      tab.location.replace(URL.createObjectURL(blob));
+    }, function (err) {
+      try { if (tab && !tab.closed) tab.close(); } catch (closeErr) {}
+      setSync(messageOf(err));
+    });
+  }
+
+  function sheetMusicButton(piece) {
+    var path = piece && typeof piece.scorePath === "string" ? piece.scorePath : "";
+    if (!path) return null;
+    var button = document.createElement("button");
+    button.type = "button";
+    button.className = "score-link";
+    button.textContent = "Sheet music";
+    button.setAttribute("data-score-path", path);
+    var title = piece && typeof piece.title === "string" ? piece.title : "";
+    button.setAttribute("aria-label", title ? "Sheet music for " + title : "Sheet music");
+    button.addEventListener("click", function () {
+      openScore(path);
+    });
+    if (!hasToken()) {
+      button.disabled = true;
+      button.title = "Connect GitHub to open sheet music";
+    }
+    return button;
+  }
+
   function renderPieces(pieces) {
     var root = mount("pieces");
     if (!root) return;
@@ -338,6 +478,9 @@
       if (isNum(piece.targetBpm)) {
         card.appendChild(muted("Target " + piece.targetBpm + " BPM"));
       }
+
+      var sheet = sheetMusicButton(piece);
+      if (sheet) card.appendChild(sheet);
 
       var sections = asArray(piece.sections);
       var s;

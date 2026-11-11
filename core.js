@@ -174,6 +174,35 @@
     };
   }
 
+  // Optional sheet. A path Brook stored under scores/ in progress-sync, or null.
+  function normalizeScorePath(value) {
+    if (typeof value !== "string") return null;
+    var path = value.replace(/^\s+|\s+$/g, "");
+    if (!path || path.length > 240) return null;
+    if (/[\u0000-\u001f\u007f\\]/.test(path)) return null;
+    if (path.charAt(0) === "/" || path.indexOf("://") !== -1) return null;
+    var parts = path.split("/");
+    if (parts.length < 2 || parts[0] !== "scores") return null;
+    var i;
+    for (i = 0; i < parts.length; i++) {
+      var part = parts[i];
+      if (!part || part === "." || part === "..") return null;
+      if (part.indexOf("?") !== -1 || part.indexOf("#") !== -1 || part.indexOf("%") !== -1) return null;
+    }
+    if (!/\.pdf$/i.test(parts[parts.length - 1])) return null;
+    return parts.join("/");
+  }
+
+  function scoreContentsUrl(repo, scorePath) {
+    var path = normalizeScorePath(scorePath);
+    if (!path) return null;
+    if (typeof repo !== "string" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return null;
+    var encoded = path.split("/").map(function (part) {
+      return encodeURIComponent(part);
+    }).join("/");
+    return "https://api.github.com/repos/" + repo + "/contents/" + encoded;
+  }
+
   function normalizePiece(id, raw) {
     var src = asObject(raw) || {};
     var sections = [];
@@ -188,6 +217,7 @@
       composer: typeof src.composer === "string" ? src.composer : "",
       status: typeof src.status === "string" ? src.status : "",
       targetBpm: finiteOrNull(src.targetBpm),
+      scorePath: normalizeScorePath(src.scorePath),
       sections: sections
     };
   }
@@ -1224,7 +1254,9 @@
     seedDoc: seedDoc,
     demoDoc: demoDoc,
     schemaVersionOf: schemaOf,
+    scoreContentsUrl: scoreContentsUrl,
     normalizeEntries: normalizeEntries,
+    normalizeScorePath: normalizeScorePath,
     liveEntries: liveEntries,
     addEntry: addEntry,
     editEntry: editEntry,

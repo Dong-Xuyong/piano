@@ -54,9 +54,11 @@ assert.deepStrictEqual(Object.keys(PianoCore).sort(), [
   "mergeEntries",
   "minutesByPiece",
   "normalizeEntries",
+  "normalizeScorePath",
   "pieceChoices",
   "saveWithRetry",
   "schemaVersionOf",
+  "scoreContentsUrl",
   "seedDoc",
   "shift",
   "todayKey",
@@ -384,6 +386,60 @@ assert.strictEqual(garbage.profile.minimumSessionMinutes, 10);
 assert.strictEqual(garbage.pieces.length, 1);
 assert.strictEqual(garbage.pieces[0].id, "p");
 assert.strictEqual(garbage.pieces[0].title, "");
+assert.strictEqual(garbage.pieces[0].scorePath, null);
+
+assert.strictEqual(
+  PianoCore.normalizeScorePath("scores/river-flows-in-you.pdf"),
+  "scores/river-flows-in-you.pdf"
+);
+assert.strictEqual(PianoCore.normalizeScorePath("  scores/comptine.pdf  "), "scores/comptine.pdf");
+assert.strictEqual(PianoCore.normalizeScorePath("scores/nested/entertainer.PDF"), "scores/nested/entertainer.PDF");
+assert.strictEqual(PianoCore.normalizeScorePath(undefined), null);
+assert.strictEqual(PianoCore.normalizeScorePath(""), null);
+assert.strictEqual(PianoCore.normalizeScorePath("   "), null);
+assert.strictEqual(PianoCore.normalizeScorePath("../secrets.pdf"), null);
+assert.strictEqual(PianoCore.normalizeScorePath("scores/../piano.json"), null);
+assert.strictEqual(PianoCore.normalizeScorePath("/scores/a.pdf"), null);
+assert.strictEqual(PianoCore.normalizeScorePath("https://evil.example/scores/a.pdf"), null);
+assert.strictEqual(PianoCore.normalizeScorePath("scores/notes.txt"), null);
+assert.strictEqual(PianoCore.normalizeScorePath("piano.json"), null);
+assert.strictEqual(
+  PianoCore.scoreContentsUrl("Dong-Xuyong/progress-sync", "scores/nuvole-bianche.pdf"),
+  "https://api.github.com/repos/Dong-Xuyong/progress-sync/contents/scores/nuvole-bianche.pdf"
+);
+assert.strictEqual(
+  PianoCore.scoreContentsUrl("Dong-Xuyong/progress-sync", "scores/a b.pdf"),
+  "https://api.github.com/repos/Dong-Xuyong/progress-sync/contents/scores/a%20b.pdf"
+);
+assert.strictEqual(PianoCore.scoreContentsUrl("not a repo", "scores/a.pdf"), null);
+assert.strictEqual(PianoCore.scoreContentsUrl("Dong-Xuyong/progress-sync", "nope"), null);
+
+var scored = PianoCore.derive(store({
+  pieces: {
+    "river-flows-in-you": {
+      title: "River Flows in You",
+      status: "learning",
+      scorePath: "scores/river-flows-in-you.pdf",
+      sections: []
+    },
+    melia: {
+      title: "Melia",
+      status: "learning",
+      sections: []
+    },
+    bad: {
+      title: "Bad",
+      status: "learning",
+      scorePath: "../secret.pdf",
+      sections: []
+    }
+  }
+}), TODAY);
+var scoredById = {};
+scored.pieces.forEach(function (piece) { scoredById[piece.id] = piece; });
+assert.strictEqual(scoredById["river-flows-in-you"].scorePath, "scores/river-flows-in-you.pdf");
+assert.strictEqual(scoredById.melia.scorePath, null);
+assert.strictEqual(scoredById.bad.scorePath, null);
 
 assert.deepStrictEqual(PianoCore.seedDoc(), require("./piano.seed.json"));
 assert.strictEqual(PianoCore.todayKey(new Date("2026-10-16T22:30:00.000Z")), "2026-10-16");
