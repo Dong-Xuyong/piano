@@ -328,7 +328,8 @@ a {
 
 .chips button,
 .log-actions button,
-.log-row-actions button {
+.log-row-actions button,
+.score-link {
   min-height: 44px;
   min-width: 44px;
   padding: 0 0.85rem;
@@ -339,6 +340,15 @@ a {
   font-family: var(--dx-font);
   font-weight: 600;
   cursor: pointer;
+}
+
+.score-link {
+  margin-top: 0.35rem;
+}
+
+.score-link:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 
 .chips button[aria-pressed="true"] {

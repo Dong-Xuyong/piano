@@ -4,7 +4,7 @@ Write the user's piano practice log into the private GitHub repo `Dong-Xuyong/pr
 
 ## File shape
 
-Version 1. This is the starting file. Do not invent a weekly goal, a tempo, a section split, or a score. Ask the user.
+Version 1. This is the starting file. Do not invent a weekly goal, a tempo, a section split, or an ear or sight score. Ask the user. Sheet music has one slot: the optional `scorePath` on a piece (see Fields). Omit it when there is no PDF. Do not invent a path.
 
 ```json
 {
@@ -41,6 +41,7 @@ Version 1. This is the starting file. Do not invent a weekly goal, a tempo, a se
 - `profile.weeklyMinutesGoal` is a number (minutes per week) or `null`. Do not invent it. Ask the user. Leave it `null` until they name one.
 - `profile.minimumSessionMinutes` stays `10` unless the user changes it. A day counts toward the streak only when `minutes` is at least this value. The site computes the streak. You store `minutes`.
 - `pieces` is a map. The key is a kebab-case id. `status` is exactly one of `learning`, `polished`, `maintaining`, `planned`.
+- `pieces.<id>.scorePath` is an optional string path relative to the `Dong-Xuyong/progress-sync` repo root. It points at a PDF under `scores/` (for example `scores/river-flows-in-you.pdf`). Omit the field when the piece has no sheet. Brook is the only writer. The site reads the path and opens that PDF; it never writes `scorePath`.
 - `targetBpm` is a number or `null`. Never invent a tempo. Ask the user for the piece target and for each section target.
 - `sections` items: `{ "id": kebab-case, "bars": "1-8", "label": short name, "targetBpm": number or null }`. Do not invent section splits. Ask how the user wants the piece split, then write those sections.
 - `sessions` keys are local dates `YYYY-MM-DD`. Value: `{ "updatedAt": ISO-8601 UTC, "minutes": number, "pieces": [ { "pieceId", "sectionId", "cleanBpm": number, "hands": "left"|"right"|"together" } ], "ear": [ { "app", "drill", "correct", "total" } ], "sight": [ { "app", "level", "correct", "total" } ], "note": string }`.
@@ -84,4 +85,4 @@ Rules:
 - Converting a legacy day. If a day has `minutes` greater than 0 and no `entries`, the first writer that adds an entry first inserts `{ "id": "ps_legacy", "at": null, "minutes": <old minutes>, "pieceId": null, "pieceTitle": "", "note": "", "source": "legacy", "updatedAt": <now> }`, then appends the new entry. The day-level `note`, `pieces`, `ear`, and `sight` are never changed by this conversion.
 - When Dong tells you the piece for a legacy block, edit `ps_legacy`: set `pieceId` and bump `updatedAt`.
 - On 409, GET again. Union `entries` by `id` per day, and the newer `updatedAt` wins. Recompute `minutes`. For every other key, keep the v1 rule: re-apply only your own change. Then PUT once more. If that PUT also returns 409, stop and report the error.
-- `pieces`, `recordings`, `plan`, `profile`, and the v1 day fields are still written only by you. The app never writes them.
+- `pieces` (including optional `scorePath`), `recordings`, `plan`, `profile`, and the v1 day fields are still written only by you. The app never writes them.
